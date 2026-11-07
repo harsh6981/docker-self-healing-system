@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ app_name }}</title>
+<style>
+  :root {
+    --bg:#f4f6f9; --card:#ffffff; --ink:#1b2430; --muted:#5b6778; --line:#dde2ea;
+    --ok:#1b7f55; --ok-bg:#e3f4ec; --bad:#b83227; --bad-bg:#fbe7e4; --off:#6b7280; --off-bg:#eceef2;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#12171f; --card:#1b222d; --ink:#e8ecf2; --muted:#9aa6b6; --line:#2c3644;
+      --ok:#4cc38a; --ok-bg:#14382a; --bad:#ff7b6e; --bad-bg:#43201d; --off:#9aa6b6; --off-bg:#262e3a; }
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink);
+    font:16px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
+  main { max-width:760px; margin:0 auto; padding:40px 20px; }
+  h1 { font-size:1.5rem; margin:0 0 4px; }
+  p.sub { color:var(--muted); margin:0 0 28px; }
+  .status { border-radius:14px; padding:28px; border:1px solid var(--line); background:var(--card); }
+  .badge { display:inline-flex; align-items:center; gap:10px; font-size:1.9rem; font-weight:700;
+    padding:6px 16px; border-radius:999px; }
+  .badge::before { content:""; width:14px; height:14px; border-radius:50%; background:currentColor; }
+  .healthy { color:var(--ok); background:var(--ok-bg); }
+  .failed  { color:var(--bad); background:var(--bad-bg); }
+  .offline { color:var(--off); background:var(--off-bg); }
+  dl { display:grid; grid-template-columns:max-content 1fr; gap:8px 24px; margin:24px 0 0; }
+  dt { color:var(--muted); } dd { margin:0; font-variant-numeric:tabular-nums; }
+  .actions { display:flex; flex-wrap:wrap; gap:10px; margin-top:28px; }
+  button { font:inherit; padding:10px 16px; border-radius:8px; border:1px solid var(--line);
+    background:var(--card); color:var(--ink); cursor:pointer; }
+  button:hover { border-color:var(--muted); }
+  button:focus-visible { outline:3px solid #4b7bec; outline-offset:2px; }
+  button.danger { border-color:var(--bad); color:var(--bad); }
+  #msg { margin-top:16px; color:var(--muted); min-height:1.5em; }
+</style>
+</head>
+<body>
+<main>
+  <h1>{{ app_name }}</h1>
+  <p class="sub">Sample application monitored by the self-healing system.</p>
+
+  <section class="status" aria-live="polite">
+    <span id="badge" class="badge offline">Connecting</span>
+    <dl>
+      <dt>Container (hostname)</dt><dd id="host">-</dd>
+      <dt>Process uptime</dt><dd id="uptime">-</dd>
+      <dt>Requests served</dt><dd id="reqs">-</dd>
+      <dt>Health endpoint</dt><dd><a href="/health">/health</a></dd>
+    </dl>
+    <div class="actions">
+      <button class="danger" data-action="fail">Simulate failure</button>
+      <button data-action="restore">Restore application</button>
+      <button class="danger" data-action="crash">Crash process</button>
+    </div>
+    <div id="msg"></div>
+  </section>
+</main>
+
+<script>
+const badge = document.getElementById('badge');
+const msg = document.getElementById('msg');
+function fmt(sec){ sec=Math.floor(sec); const m=Math.floor(sec/60); return m? m+'m '+(sec%60)+'s' : sec+'s'; }
+async function refresh(){
+  try {
+    const r = await fetch('/api/status', {cache:'no-store'});
+    const s = await r.json();
+    badge.textContent = s.healthy ? 'Healthy' : 'Failed';
+    badge.className = 'badge ' + (s.healthy ? 'healthy' : 'failed');
+    document.getElementById('host').textContent = s.hostname;
+    document.getElementById('uptime').textContent = fmt(s.uptime_seconds);
+    document.getElementById('reqs').textContent = s.requests_served;
+  } catch(e) {
+    badge.textContent = 'Unreachable'; badge.className = 'badge offline';
+  }
+}
+document.querySelectorAll('button[data-action]').forEach(b => b.addEventListener('click', async () => {
+  const a = b.dataset.action;
+  try { const r = await fetch('/'+a, {method:'POST'}); const j = await r.json(); msg.textContent = j.message; }
+  catch(e) { msg.textContent = 'Request sent; the process may have exited.'; }
+  refresh();
+}));
+refresh(); setInterval(refresh, 2000);
+</script>
+</body>
+</html>

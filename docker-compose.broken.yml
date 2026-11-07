@@ -1,0 +1,10 @@
+# Demo override: Service A boots already broken, so restarting it never helps.
+# Use it to show the restart-loop protection (circuit breaker):
+#
+#   docker compose -f docker-compose.yml -f docker-compose.broken.yml up -d --build
+#
+# Return to normal with:  docker compose up -d --force-recreate web
+services:
+  web:
+    environment:
+      START_FAILED: "true"

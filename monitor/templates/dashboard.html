@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Self-Healing Monitor</title>
+<style>
+  :root {
+    --bg:#eef1f5; --panel:#ffffff; --ink:#18212d; --muted:#5d6a7c; --line:#d9dfe8; --head:#18212d;
+    --healthy:#1b7f55; --starting:#7b8aa0; --unhealthy:#c27b0e; --stopped:#b83227;
+    --recovering:#2f62d6; --circuit:#6b1a14; --missing:#9aa3b0;
+    --focus:#2f62d6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#0f141b; --panel:#181f29; --ink:#e7ebf1; --muted:#9aa7b8; --line:#2a3443; --head:#0b0f15;
+      --healthy:#4cc38a; --starting:#8b99ad; --unhealthy:#f0a93b; --stopped:#ff7b6e;
+      --recovering:#7aa2ff; --circuit:#ff5a4a; --missing:#6b7686; --focus:#7aa2ff; }
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink);
+    font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
+  header { background:var(--head); color:#e9eef5; padding:18px 24px; display:flex; flex-wrap:wrap;
+    align-items:center; justify-content:space-between; gap:12px; }
+  header h1 { font-size:1.2rem; margin:0; font-weight:650; }
+  header p { margin:2px 0 0; color:#9fb0c4; font-size:.88rem; }
+  .conn { font-size:.88rem; padding:5px 12px; border-radius:999px; background:#233044; color:#cfe0f5; }
+  .conn.bad { background:#5a1f1a; color:#ffd6d1; }
+  main { max-width:1280px; margin:0 auto; padding:20px 24px 48px; }
+  .summary { font-size:1.05rem; margin:0 0 18px; color:var(--muted); }
+  .summary b { color:var(--ink); font-size:1.35rem; font-variant-numeric:tabular-nums; margin:0 2px 0 10px; }
+  .summary b:first-child { margin-left:0; }
+  .panel { background:var(--panel); border:1px solid var(--line); border-radius:10px; margin-bottom:22px; }
+  .panel > h2 { font-size:1rem; margin:0; padding:14px 18px; border-bottom:1px solid var(--line);
+    display:flex; justify-content:space-between; align-items:center; gap:12px; }
+  .scroll { overflow-x:auto; }
+  table { border-collapse:collapse; width:100%; min-width:1040px; }
+  th, td { text-align:left; padding:12px 14px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { font-weight:600; color:var(--muted); font-size:.85rem; white-space:nowrap; }
+  tr:last-child td { border-bottom:0; }
+  td.num { font-variant-numeric:tabular-nums; }
+  .name { font-weight:650; }
+  .sub { color:var(--muted); font-size:.82rem; }
+  .badge { display:inline-block; padding:2px 10px; border-radius:999px; font-size:.82rem; font-weight:600;
+    color:#fff; white-space:nowrap; }
+  .s-healthy{background:var(--healthy)} .s-starting{background:var(--starting)}
+  .s-unhealthy{background:var(--unhealthy)} .s-stopped{background:var(--stopped)}
+  .s-recovering{background:var(--recovering)} .s-circuit_open{background:var(--circuit)}
+  .s-missing,.s-unknown{background:var(--missing)}
+  .strip { display:flex; gap:2px; margin-top:8px; height:18px; align-items:stretch; }
+  .strip i { flex:0 0 5px; border-radius:1px; background:var(--missing); opacity:.35; }
+  .strip i.on { opacity:1; }
+  .strip .healthy{background:var(--healthy)} .strip .starting{background:var(--starting)}
+  .strip .unhealthy{background:var(--unhealthy)} .strip .stopped{background:var(--stopped)}
+  .strip .recovering{background:var(--recovering)} .strip .circuit_open{background:var(--circuit)}
+  .controls { display:flex; flex-wrap:wrap; gap:6px; }
+  button, .btn { font:inherit; font-size:.84rem; padding:5px 10px; border-radius:6px; border:1px solid var(--line);
+    background:var(--panel); color:var(--ink); cursor:pointer; text-decoration:none; }
+  button:hover, .btn:hover { border-color:var(--muted); }
+  button:focus-visible, .btn:focus-visible { outline:3px solid var(--focus); outline-offset:2px; }
+  button.warn { color:var(--stopped); border-color:var(--stopped); }
+  button:disabled { opacity:.5; cursor:default; }
+  .empty { padding:26px 18px; color:var(--muted); }
+  ul.events { list-style:none; margin:0; padding:0; max-height:380px; overflow-y:auto; }
+  ul.events li { display:grid; grid-template-columns:96px 100px 150px 1fr; gap:10px; padding:8px 18px;
+    border-bottom:1px solid var(--line); font-size:.88rem; }
+  ul.events li:last-child { border-bottom:0; }
+  .lv-WARNING{color:var(--unhealthy)} .lv-ERROR{color:var(--stopped)}
+  .lv-SUCCESS{color:var(--healthy)} .lv-INFO{color:var(--muted)}
+  .lv { font-weight:600; }
+  .tm { color:var(--muted); font-variant-numeric:tabular-nums; }
+  footer { color:var(--muted); font-size:.85rem; }
+  @media (max-width:720px){ ul.events li { grid-template-columns:1fr; gap:0; } }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>Self-Healing Container Monitor</h1>
+    <p id="policy">Loading policy...</p>
+  </div>
+  <span id="conn" class="conn">Connecting</span>
+</header>
+
+<main>
+  <p class="summary" id="summary"></p>
+
+  <section class="panel">
+    <h2>Monitored containers
+      <span class="controls">
+        <a class="btn" href="/report.csv">Download report (CSV)</a>
+        <a class="btn" href="/api/report" target="_blank" rel="noopener">Report (JSON)</a>
+      </span>
+    </h2>
+    <div class="scroll">
+      <table>
+        <thead><tr>
+          <th>Container</th><th>State</th><th>Docker status / health</th><th>Failures</th>
+          <th>Restarts</th><th>Last failure</th><th>Last recovery</th>
+          <th>Recovery time</th><th>Uptime</th><th>Test controls</th>
+        </tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+    <div id="empty" class="empty" hidden>No containers with the label selfheal.monitor=true found yet. Run <code>docker compose up -d</code>.</div>
+  </section>
+
+  <section class="panel">
+    <h2>Recovery events</h2>
+    <ul class="events" id="events"></ul>
+  </section>
+
+  <footer>Everything on this page is read from the Docker engine; nothing is simulated. Refreshes every 2 seconds.</footer>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const LABEL = {healthy:'Healthy', starting:'Starting', unhealthy:'Unhealthy', stopped:'Stopped',
+  recovering:'Recovering', circuit_open:'Recovery paused', missing:'Missing', unknown:'Unknown'};
+
+function el(tag, cls, text){ const e=document.createElement(tag); if(cls) e.className=cls; if(text!==undefined) e.textContent=text; return e; }
+function when(ts){ return ts ? new Date(ts*1000).toLocaleTimeString() : '-'; }
+function dur(s){
+  if (s===null || s===undefined) return '-';
+  if (s < 60) return s.toFixed(1)+' s';
+  return Math.floor(s/60)+' min '+Math.round(s%60)+' s';
+}
+
+async function act(path, body, btn){
+  btn.disabled = true;
+  try { await fetch(path, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body||{})}); }
+  finally { setTimeout(()=>{ btn.disabled=false; }, 800); refresh(); }
+}
+
+function controls(c){
+  const box = el('div','controls');
+  [['Fail','fail',true],['Restore','restore',false],['Crash','crash',true]].forEach(([label,a,warn])=>{
+    const b = el('button', warn?'warn':'', label);
+    b.title = a==='fail' ? 'Make /health return 503 (container becomes unhealthy)'
+            : a==='restore' ? 'Make /health return 200 again'
+            : 'Kill the process (container exits, Docker restart policy reacts)';
+    b.addEventListener('click', ()=>act('/api/simulate/'+a, {target:c.name}, b));
+    box.appendChild(b);
+  });
+  if (c.circuit_open){
+    const b = el('button','', 'Resume recovery');
+    b.addEventListener('click', ()=>act('/api/reset/'+encodeURIComponent(c.name), {}, b));
+    box.appendChild(b);
+  }
+  return box;
+}
+
+function row(c){
+  const tr = el('tr');
+  let td = el('td'); td.appendChild(el('div','name',c.name));
+  const strip = el('div','strip'); const tl = c.timeline || [];
+  for (let i=0;i<60;i++){ const s = tl[tl.length-60+i]; const b = el('i', s?('on '+s):''); if(s) b.title=LABEL[s]||s; strip.appendChild(b); }
+  td.appendChild(strip); tr.appendChild(td);
+
+  td = el('td'); td.appendChild(el('span','badge s-'+c.state, LABEL[c.state]||c.state));
+  if (c.current_downtime_seconds > 0) td.appendChild(el('div','sub','down '+dur(c.current_downtime_seconds)));
+  tr.appendChild(td);
+
+  td = el('td'); td.appendChild(el('div','',c.status)); td.appendChild(el('div','sub','health: '+c.health)); tr.appendChild(td);
+  td = el('td','num',String(c.failures)); if (c.last_failure_reason) { td.appendChild(el('div','sub',c.last_failure_reason)); } tr.appendChild(td);
+  td = el('td','num',String(c.restarts_total));
+  td.appendChild(el('div','sub','recovery logic '+c.monitor_restarts+', Docker policy '+c.docker_restarts)); tr.appendChild(td);
+  tr.appendChild(el('td','num',when(c.last_failure_time)));
+  tr.appendChild(el('td','num',when(c.last_recovery_time)));
+  td = el('td','num',dur(c.last_recovery_duration)); td.appendChild(el('div','sub','total '+dur(c.total_recovery_seconds))); tr.appendChild(td);
+  tr.appendChild(el('td','num', c.uptime_percent===null ? '-' : c.uptime_percent.toFixed(2)+' %'));
+  td = el('td'); td.appendChild(controls(c)); tr.appendChild(td);
+  return tr;
+}
+
+function render(d){
+  const cs = d.containers;
+  const healthy = cs.filter(c=>c.state==='healthy').length;
+  const fails = cs.reduce((a,c)=>a+c.failures,0);
+  const rest = cs.reduce((a,c)=>a+c.restarts_total,0);
+  const rec = cs.reduce((a,c)=>a+c.recoveries,0), tot = cs.reduce((a,c)=>a+c.total_recovery_seconds,0);
+  const s = $('summary'); s.textContent='';
+  [[cs.length,'containers monitored'],[healthy,'healthy'],[fails,'failures detected'],[rest,'restarts'],
+   [rec? dur(tot/rec):'-','average recovery time']].forEach(([n,t])=>{ s.appendChild(el('b','',String(n))); s.appendChild(document.createTextNode(' '+t)); });
+
+  const tb = $('rows'); tb.textContent=''; cs.forEach(c=>tb.appendChild(row(c)));
+  $('empty').hidden = cs.length>0;
+
+  const ul = $('events'); ul.textContent='';
+  if (!d.events.length) ul.appendChild(el('li','', 'No events yet.'));
+  d.events.forEach(e=>{
+    const li = el('li'); li.appendChild(el('span','tm',new Date(e.time*1000).toLocaleTimeString()));
+    li.appendChild(el('span','lv lv-'+e.level, e.level)); li.appendChild(el('span','',e.container+' / '+e.event));
+    li.appendChild(el('span','',e.message)); ul.appendChild(li);
+  });
+
+  const p = d.policy;
+  $('policy').textContent = 'Polling every '+p.poll_interval+' s. Restart after '+p.unhealthy_polls+
+    ' unhealthy polls. Loop guard: max '+p.max_restarts+' restarts per '+p.window_seconds+' s, '+p.cooldown_seconds+' s cooldown.';
+  const conn = $('conn');
+  const ok = d.monitor.docker_ok;
+  conn.textContent = ok ? 'Docker connected' : 'Docker unreachable';
+  conn.className = 'conn' + (ok ? '' : ' bad');
+}
+
+async function refresh(){
+  try { const r = await fetch('/api/status', {cache:'no-store'}); render(await r.json()); }
+  catch(e){ const c=$('conn'); c.textContent='Dashboard offline'; c.className='conn bad'; }
+}
+refresh(); setInterval(refresh, 2000);
+</script>
+</body>
+</html>
